@@ -1,0 +1,46 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Env files
+.env
+.env.*
+
+# Logs
+*.log
+
+# ---- Virtual environments ----
+.venv/
+venv/
+ENV/
+env/
+
+# ---- Editor settings ----
+.vscode/
+.idea/
+*.swp
+
+# ---- OS ----
+Thumbs.db
+.DS_Store
+
+# ---- Generated project outputs ----
+# ch_lite_gpt produces training artifacts and generated corpora here.
+artifacts/
+corpus/
+
+# Common ML experiment outputs
+**/runs/
+**/wandb/
+**/lightning_logs/

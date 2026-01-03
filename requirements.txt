@@ -1,0 +1,6 @@
+pip>=21.0
+# CPU-first; if you have CUDA you can install a CUDA build separately
+torch>=2.2,<2.5
+PyYAML>=6.0,<7.0
+numpy>=1.24,<2.0
+tokenizers>=0.15,<0.25

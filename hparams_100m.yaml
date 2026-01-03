@@ -1,0 +1,44 @@
+seed: 123
+threads: auto
+paths:
+  train_jsonl: corpus/train.jsonl
+  valid_jsonl: corpus/valid.jsonl
+  tokenizer_json: artifacts/tokenizer.json
+  out_dir: artifacts
+text:
+  # Keep this moderate for CPU; increase if you have GPU.
+  seq_len: 128
+  prefix_pattern: "用户:{q}\n助手:"
+bpe:
+  vocab_size: 4096
+corpus:
+  train_n: 100000
+  valid_n: 5000
+net:
+  # ~100M params with this codebase's SwiGLU blocks.
+  layers: 10
+  heads: 12
+  width: 768
+  dropout: 0.1
+optim:
+  lr: 0.0002
+  weight_decay: 0.01
+  grad_clip: 1.0
+  warmup_steps: 200
+  total_steps: 5000
+  # CPU training for 100M can be very slow; cap or remove as you like.
+  max_seconds: 3600
+  batch_tokens: 1024
+  micro_batch: 1
+eval:
+  every: 200
+export:
+  int8: false
+decode:
+  max_new: 128
+  min_new: 6
+  temperature: 0.55
+  top_k: 40
+  top_p: 0.9
+  repeat_penalty: 1.20
+  stop: []

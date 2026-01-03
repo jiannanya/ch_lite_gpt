@@ -82,6 +82,14 @@ python -m runner.query_model --ckpt artifacts/last.pt --prompt "阅读下面短�
 
 （可选）如需导出 int8 动态量化权重：把 `hparams_100m.yaml` 里的 `export.int8` 改为 `true`，训练结束会额外生成 `artifacts/int8.pt`。
 
+数据格式
+
+`corpus/*.jsonl` 每行：
+
+```json
+{"query": "...", "answer": "..."}
+```
+
 ## Part One 详细介绍
 
 ### 1. 项目目标与设计取舍
@@ -297,13 +305,8 @@ python -m runner.train_and_verify --device cpu --hparams hparams_100m.yaml
 
 ## Part Two 原理与实际训练
 
-## 数据格式
+## 神经网络结构
 
-`corpus/*.jsonl` 每行：
-
-```json
-{"query": "...", "answer": "..."}
-```
 1) 堆叠 $L$ 个 **Transformer Block**：
 
 $$X \leftarrow \mathrm{Block}_1(X) \leftarrow \cdots \leftarrow \mathrm{Block}_L(X)$$

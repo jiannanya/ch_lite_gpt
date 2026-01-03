@@ -67,6 +67,8 @@ def main() -> None:
     ap.add_argument("--show_expected", action="store_true")
     ap.add_argument("--ckpt", type=str, default=None)
     ap.add_argument("--max_new", type=int, default=48)
+    ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--min_new", type=int, default=1)
     args = ap.parse_args()
 
     cfg = read_yaml(args.hparams)
@@ -95,8 +97,8 @@ def main() -> None:
     enc = locale.getpreferredencoding(False) or "utf-8"
     for i in idxs:
         row = rows[i]
-        prompt = str(row.get("prompt", "")).strip()
-        expected = str(row.get("completion", "")).strip()
+        prompt = str(row.get("query", row.get("prompt", ""))).strip()
+        expected = str(row.get("answer", row.get("completion", ""))).strip()
         if not prompt or not expected:
             continue
         ran += 1
@@ -120,8 +122,19 @@ def main() -> None:
                 args.device,
                 "--max_new",
                 str(int(args.max_new)),
+                "--min_new",
+                str(int(args.min_new)),
+                "--temperature",
+                str(float(args.temperature)),
+                "--top_k",
+                "0",
+                "--top_p",
+                "1.0",
+                "--repeat_penalty",
+                "1.0",
                 "--stop",
                 "\n",
+                "。",
             ],
             check=True,
             stdout=subprocess.PIPE,
@@ -147,7 +160,7 @@ def main() -> None:
             print("match: MISS")
 
     if ran == 0:
-        raise SystemExit("No valid samples with both prompt/completion")
+        raise SystemExit("No valid samples with both query/answer")
     print("\n" + "-" * 80)
     print(f"summary: exact={exact}/{ran} ({exact / ran * 100:.1f}%)")
 

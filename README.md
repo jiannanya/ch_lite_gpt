@@ -9,6 +9,20 @@
 - `corpus/`：中文训练/验证数据（jsonl）
 - `artifacts/`：tokenizer 与 checkpoint 输出目录
 
+### 价值
+
+`ch_lite_gpt` 的价值不在于“跑出一个很强的模型”，而在于它把 LLM 工程最核心的一条闭环做到了：
+
+**数据 → 分词 → 模型 → 训练 → 推理 → 验收**。
+
+当这条链路稳定之后，你再去扩数据、扩参数、换任务、做优化，都会容易很多。
+
+> 一句话总结：这是一个“能在普通 CPU 机器上跑通闭环”的中文小模型工程，覆盖 **数据生成 → 分词器 → 训练 → 推理 → 验收**，并把任务聚焦在“短文阅读理解（短答案）”这一容易验收、容易对齐的方向。
+
+向希望快速搭建一个可训练、可推理、可验证的 lite GPT 工程的同学：不依赖外部数据集下载，不需要复杂分布式环境，在 Windows + CPU 也能完成一个可用的技术闭环。
+
+---
+
 ## 快速开始（PowerShell）
 
 在本目录执行：
@@ -16,6 +30,7 @@
 ```powershell
 python -m pip install -r requirements.txt
 ```
+
 
 计算参数规模
 
@@ -67,37 +82,228 @@ python -m runner.query_model --ckpt artifacts/last.pt --prompt "阅读下面短�
 
 （可选）如需导出 int8 动态量化权重：把 `hparams_100m.yaml` 里的 `export.int8` 改为 `true`，训练结束会额外生成 `artifacts/int8.pt`。
 
+## Part One 详细介绍
+
+### 1. 项目目标与设计取舍
+
+#### 目标
+
+- **CPU 可训练**：不依赖 GPU 也能完成可观测的训练过程。
+- **推理可演示**：训练完成后可用命令行进行生成式推理。
+- **验收可复现**：用统一的验证集抽样验收，避免“看着像对了但不稳定”的主观评估。
+- **任务聚焦**：训练与验证同域，统一为“短文阅读理解/信息抽取/判断正误”等模板。
+
+#### 关键取舍
+
+- 模型采用 **Decoder-only Transformer**（最直接的 GPT 路线）。
+- 训练目标采用 **Prefix Masking**：只对答案段计算 loss，让模型把容量集中在“根据问题生成答案”。
+- 数据与验收都偏向“短答案”，便于 stop 截断与自动比对。
+
+---
+
+### 2. 代码结构：职责清晰的 3 层分工
+
+工程目录大致分为三层：
+
+- `litegpt/`：核心库（模型、训练循环、数据与 batch、采样与解码）
+- `runner/`：命令入口（造数据、造分词器、训练、推理、验收）
+- `corpus/` 与 `artifacts/`：数据与产物
+
+这种分层的好处是：
+
+- 核心逻辑在 `litegpt/`，便于复用与单测；
+- CLI 在 `runner/`，便于组合成脚本链路；
+- 数据与权重输出集中管理，不会散落在根目录。
+
+---
+
+### 3. 数据：合成“短文阅读理解”来保证同域闭环
+
+`runner/make_corpus.py` 会生成 JSONL：每行是一个样本。
+
+```json
+{"query": "...", "answer": "..."}
+```
+
+训练时会拼成一条序列：
+
+```text
+用户:{query}
+助手:{answer}
+```
+
+#### 为什么选择合成阅读理解数据
+
+- **答案确定**：便于用规则做 EXACT/CONTAINS 评估。
+- **同域一致**：train/valid 的样式一致，减少验证偏差。
+- **训练更像“指令对齐”**：query 是任务描述 + 短文，answer 是短答案。
+
+数据生成里包含多种阅读理解变体（示意）：
+
+- 会议纪要/公告/通知：抽取主持人、渠道、地点、时间
+- 信息抽取 JSON：要求“只输出 JSON”
+- 判断正误：只输出“对/错”
+
+这些任务共同点是：输出短、可控、适合 stop 截断。
+
+---
+
+### 4. 分词器：ByteLevel BPE，兼顾中文与工程可控性
+
+工程支持训练 ByteLevel BPE 分词器（典型流程是先生成语料，再训练 tokenizer）。
+
+为什么是 ByteLevel BPE：
+
+- **不用中文分词**：中文天然没有空格，byte-level 能覆盖任意字符。
+- **词表可控**：小模型/CPU 训练时，控制词表规模有利于降低 embedding 与 lm head 的参数量。
+- **工程稳定**：避免奇怪字符导致无法编码/解码。
+
+---
+
+### 5. 模型：Decoder-only Transformer（RoPE + ScaleNorm + SwiGLU + 权重共享）
+
+核心模型实现在 `litegpt/model.py`，结构是一个标准的 decoder-only Transformer：
+
+- Token Embedding
+- 堆叠若干层 Block
+- Final Norm
+- LM Head（并与 embedding 权重共享）
+
+#### 5.1 因果自注意力（Causal Self-Attention）
+
+每个位置只能看历史：用下三角 mask 保证自回归。
+
+注意力的核心计算：
+
+- 线性得到 Q/K/V
+- 计算分数 $QK^\top / \sqrt{d_h}$
+- 加因果 mask
+- softmax 得到权重
+- 加权求和得到输出
+
+#### 5.2 RoPE：把位置信息注入到 Q/K
+
+RoPE 不把“位置向量”加到 embedding 上，而是对 Q/K 做旋转变换，从而让注意力分数具备相对位置信息。
+
+工程实现上会缓存 RoPE 的 cos/sin 表，避免每次 forward 重算。
+
+#### 5.3 ScaleNorm：轻量稳定的归一化
+
+每层使用 ScaleNorm 做预归一化（Pre-Norm），在小模型训练中通常更稳定，也更省。
+
+#### 5.4 SwiGLU：门控前馈
+
+FFN 使用 SwiGLU（SiLU + gate），兼顾表达力与收敛性。
+
+#### 5.5 权重共享（Weight Tying）
+
+把 `lm_head.weight` 直接绑定到 `embedding.weight`，减少参数量并让输入输出共享同一个词向量空间。
+
+---
+
+### 6. 训练：只对答案段算 loss（Prefix Masking）
+
+训练目标仍然是 next-token prediction，但对 query 前缀部分的标签设为 ignore（不参与 loss）。
+
+直觉：
+
+- query 是“题目”，answer 是“答案”；
+- 我们更关心模型“如何答题”，而不是“如何复读题干”。
+
+这在指令数据、阅读理解数据上特别有效。
+
+训练入口示例：
+
+```powershell
+python -m runner.train_cpu --device cpu --hparams hparams_100m.yaml
+```
+
+训练循环通常包含：
+
+- AdamW
+- warmup + cosine 学习率
+- 梯度累积（用小 micro-batch 模拟大 batch）
+- 梯度裁剪
+- 定期评估与保存 checkpoint
+
+---
+
+### 7. 推理：自回归生成 + stop 控制“短答案”
+
+推理入口示例：
+
+```powershell
+python -m runner.query_model --ckpt artifacts/last.pt --prompt "阅读下面短文：\n...\n\n问题：..." --device cpu
+```
+
+阅读理解的输出通常是短答案，因此推理侧最关键的是“可控输出”：
+
+- `max_new_tokens` 不要太大
+- `stop` 建议用换行 `\n` 或句号等
+- 温度/top-k/top-p 可以更保守（很多场景 temperature=0 或很小就够）
+- 重复惩罚、trigram blocking 用来抑制尾部重复
+
+目标是让模型“答完就停”，而不是继续胡写时间戳或拼接杂讯。
+
+---
+
+### 8. 验收：从 valid 抽样，做自动对比
+
+工程提供 `runner/verify.py` 风格的验收：
+
+- 从 `corpus/valid.jsonl` 抽样若干条
+- 打印 query/expected
+- 调用推理脚本拿到 model 输出
+- 做 EXACT / CONTAINS / MISS 的统计
+
+这种验收方式的价值是：
+
+- 不靠主观“看着不错”
+- 可固定 seed 做回归
+- 适合迭代 prompt 模板、stop 策略、数据生成规则
+
+---
+
+### 9. 一条推荐的“最小闭环”命令链
+
+在本目录下：
+
+```powershell
+python -m pip install -r requirements.txt
+python -m runner.make_corpus --hparams hparams_100m.yaml
+python -m runner.make_tokenizer --hparams hparams_100m.yaml
+python -m runner.train_cpu --device cpu --hparams hparams_100m.yaml
+python -m runner.train_and_verify --device cpu --hparams hparams_100m.yaml
+```
+
+你会得到：
+
+- `corpus/`：训练/验证数据
+- `artifacts/`：tokenizer 与 checkpoint（如 `last.pt`）
+- verify 的抽样验收输出
+
+---
+
+### 10. 经验与可扩展方向
+
+如果你准备继续把它“从能跑”推进到“更好用”，建议优先级如下：
+
+1) **更严格的输出约束**：短答案任务强依赖 stop 与输出清洗；必要时做“答案抽取”而非直接对比整段生成。
+2) **更丰富的阅读理解分布**：加入更多实体类型（人名/部门/日期/渠道）、更多否定/干扰项，提高泛化。
+3) **更强的训练监控**：记录 train/val loss、生成样例、训练耗时，方便 CPU 侧做效率对比。
+4) **更高效推理**：KV cache、批量推理、量化/编译优化等。
+
+---
+
+## Part Two 原理与实际训练
+
 ## 数据格式
 
 `corpus/*.jsonl` 每行：
 
 ```json
-{"prompt": "...", "completion": "..."}
+{"query": "...", "answer": "..."}
 ```
-
-训练时会拼接为：
-
-`用户:{prompt}\n助手:{completion}`
-
-并只对 `completion` 段计算损失（prefix masking）。
-
-## 神经网络结构与原理（Decoder-only Transformer）
-
-这个工程的核心模型是 **Decoder-only Transformer**：给定历史 token 序列 $x_{\le t}$，自回归预测下一个 token $x_{t+1}$。
-
-### 总体结构（从输入到输出）
-
-设：
-
-- 词表大小 $V$，序列长度 $T$，批大小 $B$
-- 隐藏维度 $d$，注意力头数 $h$，单头维度 $d_h = d/h$
-
-前向计算（概念流程）：
-
-1) **Token Embedding**：$X \in \mathbb{R}^{B\times T\times d}$
-
-$$X = \mathrm{Embed}(\mathrm{ids})$$
-
 1) 堆叠 $L$ 个 **Transformer Block**：
 
 $$X \leftarrow \mathrm{Block}_1(X) \leftarrow \cdots \leftarrow \mathrm{Block}_L(X)$$
@@ -169,7 +375,7 @@ $$\mathrm{FFN}(x) = (\mathrm{SiLU}(xW_1)\odot (xW_2))W_3$$
 
 样本被拼成一条序列（示意）：
 
-`用户: {prompt}\n助手: {completion}`
+`用户: {query}\n助手: {answer}`
 
 训练时做标准的 next-token 预测：
 
@@ -182,8 +388,8 @@ $$\mathcal{L} = -\sum_{t=0}^{T-2} w_t\log p_\theta(x_{t+1}\mid x_{\le t})$$
 
 其中 $w_t \in \{0,1\}$：
 
-- **prompt / 前缀**部分：$w_t=0$（忽略，不反向）
-- **completion / 答案**部分：$w_t=1$（参与训练）
+- **query / 前缀**部分：$w_t=0$（忽略，不反向）
+- **answer / 答案**部分：$w_t=1$（参与训练）
 
 这会强制模型把容量集中在“根据问题生成答案”上，而不是去复读提示词。
 
@@ -255,8 +461,6 @@ expected:
 邮件
 
 model:
-邮件"}"}月19日 14·7
-extracted:
 邮件
 match: EXACT
 
@@ -275,9 +479,7 @@ expected:
 王敏
 
 model:
-李雷日 14·7月19
-extracted:
-李雷日
+李雷
 match: MISS
 
 ================================================================================   
@@ -295,9 +497,7 @@ expected:
 做回滚开关
 
 model:
-做降级日 14·7月19
-extracted:
-做降级日
+做降级
 match: MISS
 
 --------------------------------------------------------------------------------   

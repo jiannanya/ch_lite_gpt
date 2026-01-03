@@ -26,6 +26,7 @@ def main() -> None:
     ap.add_argument("--prompt", type=str, required=True)
     ap.add_argument("--device", type=str, default="cpu", choices=["cpu", "auto"])
     ap.add_argument("--max_new", type=int, default=None)
+    ap.add_argument("--min_new", type=int, default=None)
     ap.add_argument("--temperature", type=float, default=None)
     ap.add_argument("--top_k", type=int, default=None)
     ap.add_argument("--top_p", type=float, default=None)
@@ -62,7 +63,7 @@ def main() -> None:
     dec = cfg.get("decode", {})
     s = Sampler(
         max_new=int(args.max_new if args.max_new is not None else dec.get("max_new", 96)),
-        min_new=int(dec.get("min_new", 6)),
+        min_new=int(args.min_new if args.min_new is not None else dec.get("min_new", 6)),
         temperature=float(args.temperature if args.temperature is not None else dec.get("temperature", 0.0)),
         top_k=int(args.top_k if args.top_k is not None else dec.get("top_k", 0)),
         top_p=float(args.top_p if args.top_p is not None else dec.get("top_p", 1.0)),

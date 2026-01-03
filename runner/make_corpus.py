@@ -391,7 +391,7 @@ def _write_stream(
             if k in train_keys or k in seen_valid:
                 continue
             seen_valid.add(k)
-            f.write(json.dumps({"prompt": q, "completion": a}, ensure_ascii=False) + "\n")
+            f.write(json.dumps({"query": q, "answer": a}, ensure_ascii=False) + "\n")
             written += 1
             if written % 1000 == 0:
                 dt = time.time() - t0
@@ -452,7 +452,7 @@ def main() -> None:
             if k in train_keys:
                 continue
             train_keys.add(k)
-            f.write(json.dumps({"prompt": q, "completion": a}, ensure_ascii=False) + "\n")
+            f.write(json.dumps({"query": q, "answer": a}, ensure_ascii=False) + "\n")
             wrote += 1
             if wrote % 5000 == 0:
                 dt = time.time() - t0
@@ -478,7 +478,7 @@ def main() -> None:
             if k in train_keys or k in seen_valid:
                 continue
             seen_valid.add(k)
-            f.write(json.dumps({"prompt": q, "completion": a}, ensure_ascii=False) + "\n")
+            f.write(json.dumps({"query": q, "answer": a}, ensure_ascii=False) + "\n")
             wrote_valid += 1
 
         # Fill the rest with the higher-quality valid generator.
@@ -494,7 +494,7 @@ def main() -> None:
             if k in train_keys or k in seen_valid:
                 continue
             seen_valid.add(k)
-            f.write(json.dumps({"prompt": q, "completion": a}, ensure_ascii=False) + "\n")
+            f.write(json.dumps({"query": q, "answer": a}, ensure_ascii=False) + "\n")
             wrote_valid += 1
             if wrote_valid % 1000 == 0:
                 dt = time.time() - t0v

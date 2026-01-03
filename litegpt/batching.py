@@ -50,8 +50,10 @@ class JsonlInstruction(Dataset):
         f.seek(self._offsets[idx])
         line = f.readline()
         obj = json.loads(line.decode("utf-8"))
-        q = str(obj.get("prompt", ""))
-        a = str(obj.get("completion", ""))
+        # New schema: {"query": ..., "answer": ...}
+        # Backward compatible with older corpora: {"prompt": ..., "completion": ...}
+        q = str(obj.get("query", obj.get("prompt", "")))
+        a = str(obj.get("answer", obj.get("completion", "")))
 
         prefix_text = self._prefix_template.format(q=q)
         prefix = self._codec.encode(prefix_text, add_special=True)

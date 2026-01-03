@@ -4,8 +4,6 @@ import argparse
 import json
 from pathlib import Path
 
-from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
-
 from litegpt.config import read_yaml
 from litegpt.file_io import mkdir
 
@@ -26,6 +24,17 @@ def main() -> None:
     outp = Path(out_json)
     mkdir(outp.parent)
 
+    try:
+        from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
+    except ModuleNotFoundError:
+        print(
+            "[make_tokenizer] Python package 'tokenizers' is not installed.\n"
+            "- The project can still train/infer using the built-in ByteCodec (no tokenizer training needed).\n"
+            "- If you want a real BPE tokenizer, install deps and rerun:\n"
+            "    pip install -r requirements.txt\n"
+        )
+        return
+
     tok = Tokenizer(models.BPE(unk_token="<unk>"))
     tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     tok.decoder = decoders.ByteLevel()
@@ -41,8 +50,8 @@ def main() -> None:
                 if not line.strip():
                     continue
                 obj = json.loads(line)
-                q = str(obj.get("prompt", ""))
-                a = str(obj.get("completion", ""))
+                q = str(obj.get("query", obj.get("prompt", "")))
+                a = str(obj.get("answer", obj.get("completion", "")))
                 yield prefix.format(q=q) + a
 
     tok.train_from_iterator(iter_texts(), trainer)
